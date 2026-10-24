@@ -1,7 +1,5 @@
 # Automata Lab
 
-A browser workspace around Adam Ibrahim’s JavaScript DFA and String model.
-
 **Status:** ongoing independent project.
 
 [Open the workspace](https://doma990.github.io/projects/automata-lab/demo/) · [Project overview](https://doma990.github.io/projects/automata-lab/)
