@@ -11,7 +11,7 @@ if (!Set.prototype.union) {
     value: function (other) { const result = new Set(this); for (const value of other) result.add(value); return result; }
   });
 }
-importScripts('../model/original.js', '../adapters/dfa.js');
+importScripts('../model/dfa.js', '../model/formalstring.js', '../adapters/dfa.js');
 self.addEventListener('message', event => {
   const {id, action, payload = {}} = event.data;
   try {
@@ -29,7 +29,7 @@ self.addEventListener('message', event => {
       if ([...text].some(character => character.length > 1)) {
         throw new Error('String tools currently support basic Unicode characters only. The original suffix method reverses UTF-16 units, so emoji and other non-BMP characters are not supported here. DFA simulation still accepts single Unicode symbols.');
       }
-      const word = new String('');
+      const word = new FormalString('');
       word.setString(text);
       result = {text: word.getString(), prefixes: word.getPrefixes(), suffixes: word.getSuffixes(), substrings: [...word.getSubstrings()]};
     } else {
