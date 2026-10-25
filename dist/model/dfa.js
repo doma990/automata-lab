@@ -62,6 +62,11 @@ class DFA {
             throw new Error(`Invalid Input!`);
         }
 
+        // Different alphabets
+        if (!(a.getAlphabet().isSubsetOf(b.getAlphabet()) && a.getAlphabet().size === b.getAlphabet().size)) {
+            throw new Error(`Alphabets should be the same!`);
+        }
+        
         // Building Q
         const states = DFA.cartesianProduct(a.getStates(), b.getStates());
         const alphabet = new Set(a.getAlphabet());
@@ -76,7 +81,44 @@ class DFA {
                 delta[state][symbol] = `${a.transition(q1, symbol)},${b.transition(q2, symbol)}`;
             });
         });
+        
+        return new DFA([states, alphabet, delta, startState, acceptStates]);
+    }
+    
+    static intersection(a, b) {
+        if (!(a instanceof DFA && b instanceof DFA)) {
+            throw new Error(`Invalid Input!`);
+        }
+
+        // Different alphabets
+        if (!(a.getAlphabet().isSubsetOf(b.getAlphabet()) && a.getAlphabet().size === b.getAlphabet().size)) {
+            throw new Error(`Alphabets should be the same!`);
+        }
+
+        // Building Q
+        const states = DFA.cartesianProduct(a.getStates(), b.getStates());
+        const alphabet = new Set(a.getAlphabet());
+        const startState = `${a.getStartState()},${b.getStartState()}`;
+        const acceptStates = DFA.cartesianProduct(a.getAcceptStates(), b.getAcceptStates());
+        
+        const delta = {};
+        states.forEach(state => {
+            delta[state] = {};
+            const [q1, q2] = state.split(',');
+            alphabet.forEach(symbol => {
+                delta[state][symbol] = `${a.transition(q1, symbol)},${b.transition(q2, symbol)}`;
+            });
+        });
 
         return new DFA([states, alphabet, delta, startState, acceptStates]);
+    }
+
+    static complement(a) {
+        if (!(a instanceof DFA)) {
+            throw new Error(`Invalid Input!`);
+        }
+
+        // Building Q
+        return new DFA([a.getStates(), a.getAlphabet(), a.delta, a.getStartState(), a.getStates().difference(a.getAcceptStates())]);
     }
 }
