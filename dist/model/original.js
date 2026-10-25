@@ -123,34 +123,3 @@ class DFA {
         return new DFA([states, alphabet, delta, startState, acceptStates]);
     }
 }
-
-let states = new Set(['q0', 'q1', 'q2', 'q3', 'q4', 'q5']);
-let alphabet = new Set(['0', '1']);
-let transitionFunction = {
-    'q0': {
-        '0': 'q1',
-        '1': 'q4'
-    },
-    'q1': {
-        '0': 'q2',
-        '1': 'q3'
-    },
-    'q2': {
-        '0': 'q1',
-        '1': 'q4'
-    },
-    'q3': {
-        '0': 'q5',
-        '1': 'q4'
-    },
-    'q4': {
-        '0': 'q5',
-        '1': 'q3'
-    },
-    'q5': {
-        '0': 'q5',
-        '1': 'q5'
-    }
-};
-const myDFA = new DFA([states, alphabet, transitionFunction, 'q0', ['q1', 'q4']]);
-
