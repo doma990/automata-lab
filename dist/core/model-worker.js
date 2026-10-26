@@ -1,14 +1,35 @@
-/* The original model runs in this worker, isolated from the page's native String. */
+/* Load the model classes and route requests from the browser interface. */
 const machineAdapters = new Map();
 function registerMachineType(adapter) {
   if (machineAdapters.has(adapter.id)) throw new Error('Machine type already registered.');
   machineAdapters.set(adapter.id, adapter);
 }
-// Compatibility only: the model calls Set.union, which older browsers may lack.
+// Worker-only fallbacks for the Set operations used by the automata model.
+// Existing native implementations are kept when available.
 if (!Set.prototype.union) {
   Object.defineProperty(Set.prototype, 'union', {
     configurable: true, writable: true,
     value: function (other) { const result = new Set(this); for (const value of other) result.add(value); return result; }
+  });
+}
+if (!Set.prototype.isSubsetOf) {
+  Object.defineProperty(Set.prototype, 'isSubsetOf', {
+    configurable: true, writable: true,
+    value: function (other) {
+      if (this.size > other.size) return false;
+      for (const value of this) if (!other.has(value)) return false;
+      return true;
+    }
+  });
+}
+if (!Set.prototype.difference) {
+  Object.defineProperty(Set.prototype, 'difference', {
+    configurable: true, writable: true,
+    value: function (other) {
+      const result = new Set();
+      for (const value of this) if (!other.has(value)) result.add(value);
+      return result;
+    }
   });
 }
 importScripts('../model/dfa.js', '../model/formalstring.js', '../adapters/dfa.js');

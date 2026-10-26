@@ -1,4 +1,4 @@
-/* Integration boundary: validates inputs and delegates algorithms to the unchanged DFA. */
+/* Integration boundary: validates inputs and delegates algorithms to the DFA model. */
 (() => {
   const reserved = new Set(['__proto__', 'constructor', 'prototype']);
   const asText = value => ''.constructor(value);
@@ -64,6 +64,41 @@
     ]));
     return {machine: new DFA([states, source.getAlphabet(), transitions, names.get(source.getStartState()), [...source.getAcceptStates()].map(state => names.get(state))]), reverse};
   }
+  // Union and intersection both use paired states. Keep their presentation rules here.
+  function runBinaryOperation(payload, modelOperation, operationName, statePrefix) {
+    const leftDefinition = validate(payload.left);
+    const rightDefinition = validate(payload.right);
+    if (leftDefinition.alphabet.length !== rightDefinition.alphabet.length ||
+        leftDefinition.alphabet.some(symbol => !rightDefinition.alphabet.includes(symbol))) {
+      throw new Error(operationName + ' requires the same alphabet in both machines.');
+    }
+    if (leftDefinition.states.length * rightDefinition.states.length > 144) {
+      throw new Error('This ' + operationName.toLowerCase() + ' would exceed the workspace limit of 144 states. Choose smaller machines.');
+    }
+
+    // The model represents pairs as comma-separated labels. Temporary IDs also
+    // allow a previous union/intersection result to be used as an input.
+    const left = canonicalize(leftDefinition, 'a');
+    const right = canonicalize(rightDefinition, 'b');
+    const raw = serialize(modelOperation(left.machine, right.machine));
+    const ids = new Map(raw.states.map((state, index) => [state, statePrefix + index]));
+    const stateLabels = {};
+    for (const state of raw.states) {
+      const [a, b] = state.split(',');
+      const leftState = left.reverse[a];
+      const rightState = right.reverse[b];
+      stateLabels[ids.get(state)] = '(' + (payload.leftLabels?.[leftState] || leftState) + ', ' +
+        (payload.rightLabels?.[rightState] || rightState) + ')';
+    }
+    const definition = {
+      states: raw.states.map(state => ids.get(state)), alphabet: raw.alphabet,
+      transitions: Object.fromEntries(raw.states.map(state => [
+        ids.get(state), Object.fromEntries(raw.alphabet.map(symbol => [symbol, ids.get(raw.transitions[state][symbol])]))
+      ])),
+      startState: ids.get(raw.startState), acceptStates: raw.acceptStates.map(state => ids.get(state))
+    };
+    return {kind: 'machine', type: 'dfa', definition, stateLabels};
+  }
   registerMachineType({
     id: 'dfa', label: 'DFA', capabilities: ['simulate', 'batch', 'transition', 'diagram', 'transition-table', 'edit'],
     serialize,
@@ -86,31 +121,21 @@
         id: 'union', symbol: '∪', defaultName: 'Union machine', successMessage: 'Union created', title: 'Union of two machines', label: 'Create union',
         description: 'Build a DFA that accepts a string when either input machine accepts it. Both alphabets must match.',
         fields: [{key: 'leftId', type: 'machine', label: 'First machine'}, {key: 'rightId', type: 'machine', selection: 'other', label: 'Second machine'}, {key: 'name', type: 'text', label: 'Result name', placeholder: 'Union machine'}],
+        run(payload) { return runBinaryOperation(payload, DFA.union, 'Union', 'u'); }
+      },
+      {
+        id: 'intersection', symbol: '∩', defaultName: 'Intersection machine', successMessage: 'Intersection created', title: 'Intersection of two machines', label: 'Create intersection',
+        description: 'Build a DFA that accepts a string only when both input machines accept it. Both alphabets must match.',
+        fields: [{key: 'leftId', type: 'machine', label: 'First machine'}, {key: 'rightId', type: 'machine', selection: 'other', label: 'Second machine'}, {key: 'name', type: 'text', label: 'Result name', placeholder: 'Intersection machine'}],
+        run(payload) { return runBinaryOperation(payload, DFA.intersection, 'Intersection', 'i'); }
+      },
+      {
+        id: 'complement', symbol: '¬', defaultName: 'Complement machine', successMessage: 'Complement created', title: 'Complement of a machine', label: 'Create complement',
+        description: 'Build a DFA that accepts exactly the strings this machine rejects, over the same alphabet.',
+        fields: [{key: 'sourceId', type: 'machine', label: 'Source machine'}, {key: 'name', type: 'text', label: 'Result name', placeholder: 'Complement machine'}],
         run(payload) {
-          const leftDefinition = validate(payload.left);
-          const rightDefinition = validate(payload.right);
-          if (leftDefinition.alphabet.length !== rightDefinition.alphabet.length || leftDefinition.alphabet.some(symbol => !rightDefinition.alphabet.includes(symbol))) throw new Error('Union requires the same alphabet in both machines.');
-          if (leftDefinition.states.length * rightDefinition.states.length > 144) throw new Error('This union would exceed the workspace limit of 144 states. Choose smaller machines.');
-          // Temporary canonical labels avoid the original union's comma-based state splitting.
-          // This also permits unions of earlier union results without changing the model.
-          const left = canonicalize(payload.left, 'a');
-          const right = canonicalize(payload.right, 'b');
-          const product = DFA.union(left.machine, right.machine);
-          const raw = serialize(product);
-          const ids = new Map(raw.states.map((state, index) => [state, 'u' + index]));
-          const stateLabels = {};
-          for (const state of raw.states) {
-            const [a, b] = state.split(',');
-            const leftState = left.reverse[a];
-            const rightState = right.reverse[b];
-            stateLabels[ids.get(state)] = '(' + (payload.leftLabels?.[leftState] || leftState) + ', ' + (payload.rightLabels?.[rightState] || rightState) + ')';
-          }
-          const definition = {
-            states: raw.states.map(state => ids.get(state)), alphabet: raw.alphabet,
-            transitions: Object.fromEntries(raw.states.map(state => [ids.get(state), Object.fromEntries(raw.alphabet.map(symbol => [symbol, ids.get(raw.transitions[state][symbol])]))])),
-            startState: ids.get(raw.startState), acceptStates: raw.acceptStates.map(state => ids.get(state))
-          };
-          return {kind: 'machine', type: 'dfa', definition, stateLabels};
+          const result = DFA.complement(make(payload.source));
+          return {kind: 'machine', type: 'dfa', definition: serialize(result), stateLabels: payload.sourceLabels};
         }
       },
       {

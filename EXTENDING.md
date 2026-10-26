@@ -1,15 +1,17 @@
 # Extending Automata Lab
 
-The original model, integration adapter, and interface are separate.
+The model classes, integration adapter, and interface are separate. DFA logic lives in `dist/model/dfa.js`; string utilities live in `dist/model/formalstring.js`.
 
 ## Add a model operation
 
-1. Obtain approval before modifying the user’s source. Otherwise use an exact copy of an approved model version.
+1. Implement and validate the operation in the appropriate model class.
 2. Add a descriptor to the operations array in dist/adapters/dfa.js.
 3. Validate and delegate to the model inside its run function.
 4. Add tests for the new behavior.
 
-The worker sends operation metadata to the page. Operation forms are rendered automatically; the HTML does not contain a fixed union/Cartesian operation list.
+The worker sends operation metadata to the page. Operation forms are rendered automatically. The DFA adapter currently registers union, intersection, and complement as visible operations. `runBinaryOperation` shares the input preparation and paired-state labels for union and intersection; complement serializes its result directly and retains the source labels.
+
+Each operation should return `{kind: "machine", type: "dfa", definition, stateLabels}` when it creates a DFA. The application then adds it to the workspace and renders its graph and transition table.
 
 Illustrative descriptor shape (not an implemented feature):
 

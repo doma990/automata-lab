@@ -18,10 +18,10 @@ const sample={states:['q0','q1','q2'],alphabet:['0','1'],transitions:{q0:{0:'q1'
 const even={states:['e','o'],alphabet:['0','1'],transitions:{e:{0:'o',1:'e'},o:{0:'e',1:'o'}},startState:'e',acceptStates:['e']};
 const execute=(operation,data)=>request('execute',{type:'dfa',operation,...data});
 function strings(depth){const values=[''];for(let i=0;i<depth;i++){for(const prefix of values.filter(word=>word.length===i)){values.push(prefix+'0',prefix+'1');}}return values.filter(word=>word.length>0);}
-test('catalog exposes union as the only user-facing operation',()=>{
+test('catalog exposes union, intersection and complement as user-facing operations',()=>{
  const catalog=request('catalog');assert.equal(catalog.originalExample,undefined);
- assert.deepEqual(catalog.types[0].operations.filter(item=>item.visible!==false).map(item=>item.id),['union']);
- assert.deepEqual(catalog.types[0].operations.map(item=>item.id),['simulate','batch','transition','union','cartesian']);
+ assert.deepEqual(catalog.types[0].operations.filter(item=>item.visible!==false).map(item=>item.id),['union','intersection','complement']);
+ assert.deepEqual(catalog.types[0].operations.map(item=>item.id),['simulate','batch','transition','union','intersection','complement','cartesian']);
 });
 test('describe reads the model getters and transition function',()=>{
  assert.deepEqual(request('describe',{type:'dfa',definition:sample}),sample);
@@ -32,7 +32,8 @@ test('acceptance and simulation trace match the recognized language for 126 non-
 test('blank simulation inputs are rejected at the interface boundary',()=>{
  assert.throws(()=>execute('simulate',{definition:even,input:''}),/at least one symbol/);
  assert.throws(()=>execute('simulate',{definition:sample,input:''}),/at least one symbol/);
- assert.equal(vm.runInContext('myDFA.simulate("")',context),'q0');
+ const modelDefinition=JSON.stringify(sample);
+ assert.equal(vm.runInContext('(()=>{const d='+modelDefinition+';return new DFA([d.states,d.alphabet,d.transitions,d.startState,d.acceptStates]).simulate("");})()',context),'q0');
 });
 test('invalid symbols are reported by the original model',()=>{
  assert.throws(()=>execute('simulate',{definition:sample,input:'02'}),/does not belong/);
@@ -121,11 +122,127 @@ test('blank batches and blank String-tool inputs are rejected',()=>{
 });
 test('legacy default examples upgrade without replacing edited machines',async()=>{
  const {upgradeExampleMachines}=await import('../dist/core/workspace.js');
- const legacyDefinition=JSON.parse(vm.runInContext('JSON.stringify({states:[...myDFA.getStates()],alphabet:[...myDFA.getAlphabet()],transitions:myDFA.delta,startState:myDFA.getStartState(),acceptStates:[...myDFA.getAcceptStates()]})',context));
+ const legacyDefinition={states:['q0','q1','q2','q3','q4','q5'],alphabet:['0','1'],transitions:{q0:{0:'q1',1:'q4'},q1:{0:'q2',1:'q3'},q2:{0:'q1',1:'q4'},q3:{0:'q5',1:'q4'},q4:{0:'q5',1:'q3'},q5:{0:'q5',1:'q5'}},startState:'q0',acceptStates:['q1','q4']};
  const legacy={id:'keep-id',name:'Original six-state DFA',description:'The example supplied alongside the original JavaScript model.',definition:legacyDefinition};
  const updated=upgradeExampleMachines([legacy]);
  assert.equal(updated[0].id,'keep-id');assert.equal(updated[0].name,'Binary multiples of 3');
  const edited={...legacy,description:'My custom description'};
  assert.equal(upgradeExampleMachines([edited])[0],edited);
  assert.equal(upgradeExampleMachines([legacy],2)[0],legacy);
+});
+
+test('intersection accepts exactly the AND of the two languages',()=>{
+ const result=execute('intersection',{left:sample,right:even});
+ assert.equal(result.definition.states.length,6);
+ for(const input of strings(6)){
+  const expected=input.endsWith('01')&&[...input].filter(symbol=>symbol==='0').length%2===0;
+  assert.equal(execute('simulate',{definition:result.definition,input}).accepted,expected,input);
+ }
+});
+
+test('complement reverses acceptance over the same alphabet',()=>{
+ const result=execute('complement',{source:sample});
+ assert.deepEqual(result.definition.states,sample.states);
+ assert.deepEqual(result.definition.alphabet,sample.alphabet);
+ assert.deepEqual(result.definition.transitions,sample.transitions);
+ for(const input of strings(6)){
+  assert.equal(execute('simulate',{definition:result.definition,input}).accepted,!input.endsWith('01'),input);
+ }
+ const twice=execute('complement',{source:result.definition});
+ assert.deepEqual(twice.definition,sample);
+ assert.throws(()=>execute('complement',{source:{...sample,transitions:{}}}),/Missing transitions/);
+ assert.throws(()=>execute('simulate',{definition:result.definition,input:'2'}),/does not belong/);
+});
+
+test('complement preserves readable labels from an earlier binary operation',()=>{
+ const combined=execute('intersection',{left:sample,right:even});
+ const result=execute('complement',{source:combined.definition,sourceLabels:combined.stateLabels});
+ assert.deepEqual(result.stateLabels,combined.stateLabels);
+ const all={states:['q'],alphabet:['0','1'],transitions:{q:{0:'q',1:'q'}},startState:'q',acceptStates:['q']};
+ assert.deepEqual(execute('complement',{source:all}).definition.acceptStates,[]);
+ assert.deepEqual(execute('complement',{source:{...all,acceptStates:[]}}).definition.acceptStates,['q']);
+});
+
+test('binary operations can consume earlier union, intersection and complement results',()=>{
+ const union=execute('union',{left:sample,right:even});
+ const intersection=execute('intersection',{left:union.definition,right:sample,leftLabels:union.stateLabels});
+ const complement=execute('complement',{source:intersection.definition,sourceLabels:intersection.stateLabels});
+ const combined=execute('union',{left:complement.definition,right:even,leftLabels:complement.stateLabels});
+ for(const input of strings(5)){
+  const ends=input.endsWith('01'),evenZeros=[...input].filter(symbol=>symbol==='0').length%2===0;
+  assert.equal(execute('simulate',{definition:intersection.definition,input}).accepted,ends,input);
+  assert.equal(execute('simulate',{definition:combined.definition,input}).accepted,!ends||evenZeros,input);
+ }
+ assert.ok(Object.values(intersection.stateLabels).some(label=>label.includes('(q0, e)')));
+});
+
+test('intersection canonicalizes comma-containing labels and validates product size',()=>{
+ const named={states:['a,b'],alphabet:['0','1'],transitions:{'a,b':{0:'a,b',1:'a,b'}},startState:'a,b',acceptStates:['a,b']};
+ const result=execute('intersection',{left:named,right:sample});
+ assert.ok(Object.values(result.stateLabels).some(label=>label.includes('a,b')));
+ assert.equal(execute('simulate',{definition:result.definition,input:'01'}).accepted,true);
+ assert.equal(execute('simulate',{definition:result.definition,input:'11'}).accepted,false);
+ const states=Array.from({length:13},(_,index)=>'s'+index);
+ const big={states,alphabet:['0'],transitions:Object.fromEntries(states.map(state=>[state,{0:state}])),startState:'s0',acceptStates:[]};
+ assert.throws(()=>execute('intersection',{left:big,right:big}),/144 states/);
+});
+
+test('union and intersection accept reordered equal alphabets and reject unequal alphabets',()=>{
+ const reversed={...even,alphabet:['1','0']};
+ const unequal={states:['s'],alphabet:['0'],transitions:{s:{0:'s'}},startState:'s',acceptStates:['s']};
+ for(const operation of ['union','intersection']){
+  const result=execute(operation,{left:sample,right:reversed});
+  assert.equal(execute('simulate',{definition:result.definition,input:'1001'}).accepted,true);
+  assert.throws(()=>execute(operation,{left:sample,right:unequal}),/same alphabet/);
+  const larger={...sample,alphabet:['0','1','2'],transitions:Object.fromEntries(sample.states.map(state=>[state,{...sample.transitions[state],2:state}]))};
+  assert.throws(()=>execute(operation,{left:sample,right:larger}),/same alphabet/);
+  // Exercise the model's own check without the interface adapter.
+  const modelCheck='(()=>{const build=d=>new DFA([d.states,d.alphabet,d.transitions,d.startState,d.acceptStates]);return DFA.'+operation+'(build('+JSON.stringify(sample)+'),build('+JSON.stringify(unequal)+'));})()';
+  assert.throws(()=>vm.runInContext(modelCheck,context),/Alphabets should be the same/);
+ }
+});
+
+test('all language operations preserve both input definitions',()=>{
+ const before=JSON.stringify({sample,even});
+ for(const operation of ['union','intersection'])execute(operation,{left:sample,right:even});
+ execute('complement',{source:sample});
+ assert.equal(JSON.stringify({sample,even}),before);
+});
+
+test('worker Set fallbacks support model operations when native methods are missing',()=>{
+ let fallbackHandler,fallbackResponse;
+ const fallbackContext=vm.createContext({structuredClone,self:{
+  addEventListener(name,callback){if(name==='message')fallbackHandler=callback;},
+  postMessage(data){fallbackResponse=data;}
+ }});
+ vm.runInContext("for(const name of ['union','isSubsetOf','difference'])Object.defineProperty(Set.prototype,name,{value:undefined,writable:true,configurable:true});",fallbackContext);
+ fallbackContext.importScripts=(...files)=>files.forEach(file=>vm.runInContext(fs.readFileSync(path.resolve(root,'dist/core',file),'utf8'),fallbackContext,{filename:file}));
+ vm.runInContext(fs.readFileSync(path.join(root,'dist/core/model-worker.js'),'utf8'),fallbackContext);
+ function fallback(operation,payload){
+  fallbackResponse=undefined;fallbackHandler({data:{id:1,action:'execute',payload:{type:'dfa',operation,...payload}}});
+  assert.ok(fallbackResponse?.ok,fallbackResponse?.error);
+  return JSON.parse(JSON.stringify(fallbackResponse.result));
+ }
+ for(const operation of ['union','intersection','complement']){
+  const result=fallback(operation,operation==='complement'?{source:sample}:{left:sample,right:even});
+  for(const input of strings(4)){
+   const ends=input.endsWith('01'),evenZeros=[...input].filter(symbol=>symbol==='0').length%2===0;
+   const expected=operation==='union'?ends||evenZeros:operation==='intersection'?ends&&evenZeros:!ends;
+   assert.equal(fallback('simulate',{definition:result.definition,input}).accepted,expected,operation+': '+input);
+  }
+ }
+ assert.equal(vm.runInContext("new Set(['x']).isSubsetOf(new Set(['y']))",fallbackContext),false);
+ assert.equal(vm.runInContext("new Set(['x','y']).isSubsetOf(new Set(['x']))",fallbackContext),false);
+ const unequal={states:['s'],alphabet:['0'],transitions:{s:{0:'s'}},startState:'s',acceptStates:['s']};
+ const modelCheck='(()=>{const build=d=>new DFA([d.states,d.alphabet,d.transitions,d.startState,d.acceptStates]);return DFA.intersection(build('+JSON.stringify(sample)+'),build('+JSON.stringify(unequal)+'));})()';
+ assert.throws(()=>vm.runInContext(modelCheck,fallbackContext),/Alphabets should be the same/);
+});
+
+test('operation metadata describes the exact inputs needed by each form',()=>{
+ const operations=request('catalog').types[0].operations;
+ for(const id of ['union','intersection']){
+  const operation=operations.find(item=>item.id===id);
+  assert.deepEqual(operation.fields.filter(field=>field.type==='machine').map(field=>field.key),['leftId','rightId']);
+ }
+ assert.deepEqual(operations.find(item=>item.id==='complement').fields.filter(field=>field.type==='machine').map(field=>field.key),['sourceId']);
 });
